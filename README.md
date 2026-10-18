@@ -1,9 +1,3 @@
-Here is a clean, public-ready `README.md` designed specifically to showcase your project on GitHub while protecting your sensitive data, operational setup, and security posture.
-
-It hides internal implementation details, replaces specific personal search targets with generic placeholders, and focuses on **what the tool does** and **how to configure it safely**.
-
----
-
 # Sourcing Agent
 
 A lightweight, automated deal finder for online resellers. Every 15 minutes, **Sourcing Agent** queries the eBay Browse API for items on a active watchlist, executes deterministic profit calculations, uses AI model verification via Google Gemini to filter out irrelevant or fraudulent listings, and delivers actionable alerts to a private Discord channel.
