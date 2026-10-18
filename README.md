@@ -1,3 +1,4 @@
+<img width="2038" height="705" alt="Sourcing_Agent_Github_70x70" src="https://github.com/user-attachments/assets/218d67c9-ae77-405e-9fc1-af40f87c3adb" />
 # Sourcing Agent
 
 A lightweight, automated deal finder for online resellers. Every 15 minutes, **Sourcing Agent** queries the eBay Browse API for items on a active watchlist, executes deterministic profit calculations, uses AI model verification via Google Gemini to filter out irrelevant or fraudulent listings, and delivers actionable alerts to a private Discord channel.
