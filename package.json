@@ -1,0 +1,19 @@
+{
+  "name": "sourcing-agent",
+  "version": "1.0.0",
+  "description": "Free marketplace sourcing agent: eBay Browse API + Gemini Flash + Discord alerts",
+  "type": "module",
+  "main": "src/agent.js",
+  "scripts": {
+    "start": "node src/agent.js",
+    "register-commands": "node scripts/registerCommands.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0"
+  }
+}
