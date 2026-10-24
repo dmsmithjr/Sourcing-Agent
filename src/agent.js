@@ -1,7 +1,7 @@
 import "dotenv/config";
 import axios from "axios";
 import { GoogleGenAI } from "@google/genai";
-import { searchListings } from "./ebayClient.js";
+import { searchListings, estimateResaleValue, isUsed } from "./ebayClient.js";
 import { loadSeen, saveSeen } from "./seenStore.js";
 import { syncWatchlist } from "./discordCommands.js";
 import {
@@ -26,11 +26,51 @@ function netProfit(resaleValue, buyPrice) {
   return resaleValue - buyPrice - resaleValue * MARKETPLACE_FEE_RATE - SHIPPING_COST;
 }
 
+// What it actually costs to buy: listing price plus the seller's shipping charge.
+// Unknown shipping (calculated rates) counts as $0 and is flagged in the alert.
+function totalBuyCost(listing) {
+  return listing.price + (listing.shippingCost ?? 0);
+}
+
+// Used listings take usedResaleValue when it's set, otherwise the same value as new ones.
+// Either value may be "auto", which uses the eBay estimate for that condition.
+function resaleSetting(item, used) {
+  return used ? item.usedResaleValue ?? item.targetResaleValue : item.targetResaleValue;
+}
+
+function needsEstimate(item) {
+  return resaleSetting(item, false) === "auto" || resaleSetting(item, true) === "auto";
+}
+
+function resaleValueFor(item, listing) {
+  const used = isUsed(listing.condition);
+  const setting = resaleSetting(item, used);
+  if (setting !== "auto") return { value: setting, estimated: false };
+  const estimate = item.resaleEstimate;
+  return { value: (used ? estimate.used : estimate.new) ?? estimate.all, estimated: true };
+}
+
+function formatResale(item) {
+  const describe = (condition) => {
+    const { value, estimated } = resaleValueFor(item, { condition });
+    return `${condition.toLowerCase()} ${estimated ? "~" : ""}$${value}`;
+  };
+  const source = item.resaleEstimate
+    ? ` (~ = estimated from ${item.resaleEstimate.sampleSize} current eBay listings)`
+    : "";
+  return `${describe("New")}, ${describe("Used")}${source}`;
+}
+
+function formatShipping(listing) {
+  if (listing.shippingCost === null) return "shipping unknown";
+  return listing.shippingCost === 0 ? "free shipping" : `$${listing.shippingCost.toFixed(2)} shipping`;
+}
+
 function buildPrompt(item, listings) {
   const lines = listings
     .map(
       (l, i) =>
-        `${i}. Title: ${l.title} | Price: $${l.price} ${l.currency} | Condition: ${l.condition} | ` +
+        `${i}. Title: ${l.title} | Price: $${l.price} ${l.currency} + ${formatShipping(l)} | Condition: ${l.condition} | ` +
         `Seller: ${l.seller} (feedback: ${l.sellerFeedback ?? "n/a"}%)`
     )
     .join("\n");
@@ -38,7 +78,7 @@ function buildPrompt(item, listings) {
   return `You are an expert streetwear, sneaker, and outerwear reseller evaluating eBay listings.
 
 TARGET ITEM: "${item.keyword}"
-TYPICAL RESALE VALUE: $${item.targetResaleValue}
+TYPICAL RESALE VALUE: ${formatResale(item)}
 
 LISTINGS:
 ${lines}
@@ -75,7 +115,8 @@ async function evaluateListings(item, listings) {
     listing,
     isValidMatch: Boolean(verdicts.get(i)?.isValidMatch),
     // Profit is computed locally; it's simple arithmetic and the model shouldn't be trusted with it.
-    estimatedProfit: netProfit(item.targetResaleValue, listing.price),
+    resale: resaleValueFor(item, listing),
+    estimatedProfit: netProfit(resaleValueFor(item, listing).value, totalBuyCost(listing)),
     reasoning: String(verdicts.get(i)?.reasoning ?? "No verdict returned"),
     hasVerdict: verdicts.has(i),
   }));
@@ -88,8 +129,13 @@ async function sendDiscordAlert(item, listing, verdict) {
     color: 0x2ecc71,
     description: verdict.reasoning.slice(0, 4096),
     fields: [
-      { name: "Buy Price", value: `$${listing.price.toFixed(2)}`, inline: true },
-      { name: "Target Resale", value: `$${item.targetResaleValue.toFixed(2)}`, inline: true },
+      { name: "Buy Price", value: `$${listing.price.toFixed(2)} + ${formatShipping(listing)}`, inline: true },
+      { name: "Total Cost", value: `$${totalBuyCost(listing).toFixed(2)}`, inline: true },
+      {
+        name: `${verdict.resale.estimated ? "Est." : "Target"} Resale (${isUsed(listing.condition) ? "used" : "new"})`,
+        value: `$${verdict.resale.value.toFixed(2)}`,
+        inline: true,
+      },
       { name: "Est. Net Profit", value: `$${verdict.estimatedProfit.toFixed(2)}`, inline: true },
       { name: "Condition", value: listing.condition, inline: true },
       { name: "Seller", value: `${listing.seller} (${listing.sellerFeedback ?? "n/a"}%)`, inline: true },
@@ -113,15 +159,23 @@ async function sendDiscordAlert(item, listing, verdict) {
   }
 }
 
-async function processWatchItem(item, seen) {
-  console.log(`\n🔎 ${item.keyword} (max $${item.maxBuyPrice})`);
+async function processWatchItem(watchItem, seen) {
+  console.log(`\n🔎 ${watchItem.keyword} (max $${watchItem.maxBuyPrice})`);
+  const item = { ...watchItem };
+  if (needsEstimate(item)) item.resaleEstimate = await estimateResaleValue(item.keyword);
+  console.log(`   resale value: ${formatResale(item)}`);
+
   const listings = await searchListings(item.keyword, item.maxBuyPrice, RESULTS_PER_KEYWORD);
   console.log(`   ${listings.length} listing(s) found`);
 
   // Do the math locally first so Gemini quota is only spent on listings that can clear the bar.
   // Skip anything a previous run already evaluated so it never alerts twice.
+  // eBay's price filter ignores shipping, so the max buy price is re-checked against the total.
   const candidates = listings.filter(
-    (l) => !seen.has(l.itemId) && netProfit(item.targetResaleValue, l.price) >= item.minProfitMargin
+    (l) =>
+      !seen.has(l.itemId) &&
+      totalBuyCost(l) <= item.maxBuyPrice &&
+      netProfit(resaleValueFor(item, l).value, totalBuyCost(l)) >= item.minProfitMargin
   );
   console.log(`   ${candidates.length} new candidate(s) pass the profit pre-filter`);
 
@@ -132,7 +186,7 @@ async function processWatchItem(item, seen) {
   for (const verdict of verdicts) {
     const { listing } = verdict;
     const label = verdict.isValidMatch ? "MATCH" : "skip ";
-    console.log(`   [${label}] $${listing.price} → $${verdict.estimatedProfit.toFixed(0)} | ${listing.title}`);
+    console.log(`   [${label}] $${totalBuyCost(listing).toFixed(2)} → $${verdict.estimatedProfit.toFixed(0)} | ${listing.title}`);
 
     try {
       if (verdict.isValidMatch && verdict.estimatedProfit >= item.minProfitMargin) {

@@ -15,8 +15,10 @@ const COMMANDS = [
     options: [
       { type: STRING, name: "item", description: "What to search eBay for, e.g. Jordan 4 Black Cat", required: true },
       { type: NUMBER, name: "max_buy", description: "Highest price you'd pay ($)", required: true, min_value: 0 },
-      { type: NUMBER, name: "resale", description: "What it usually sells for ($)", required: true, min_value: 0 },
       { type: NUMBER, name: "min_profit", description: "Only alert if net profit is at least this ($)", required: true, min_value: 0 },
+      // Discord requires optional options after required ones. Leaving it out means "estimate it".
+      { type: NUMBER, name: "resale", description: "What it usually sells for ($). Leave out to estimate from eBay", min_value: 0 },
+      { type: NUMBER, name: "used_resale", description: "What a pre-owned one sells for ($), if different", min_value: 0 },
     ],
   },
   {

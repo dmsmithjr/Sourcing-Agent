@@ -14,6 +14,8 @@ const HELP_TEXT = [
   "**Sourcing Agent commands** (picked up on the next scan, within ~15 min)",
   "`!add <item name> <max buy> <resale value> <min profit>`",
   "  e.g. `!add Jordan 4 Black Cat 200 320 50`",
+  "  or use `auto` as the resale value to estimate it from eBay: `!add Jordan 4 Black Cat 200 auto 50`",
+  "  add `used=<value>` for a separate pre-owned resale value: `!add Jordan 4 Black Cat 200 320 50 used=250`",
   "`!remove <number or item name>` — number from `!list`",
   "`!list` — show what's being searched",
   "`!help` — show this message",
@@ -42,9 +44,22 @@ function formatList(items) {
   return items
     .map(
       (item, i) =>
-        `**${i + 1}.** ${item.keyword} — buy ≤ $${item.maxBuyPrice}, resale $${item.targetResaleValue}, min profit $${item.minProfitMargin}`
+        `**${i + 1}.** ${item.keyword} — buy ≤ $${item.maxBuyPrice}, ${describeResale(item)}, min profit $${item.minProfitMargin}`
     )
     .join("\n");
+}
+
+function formatResale(value) {
+  return value === "auto" ? "auto" : `$${value}`;
+}
+
+function describeResale(item) {
+  const resale = `resale ${formatResale(item.targetResaleValue)}`;
+  return item.usedResaleValue === undefined ? resale : `${resale} (used ${formatResale(item.usedResaleValue)})`;
+}
+
+function parseResale(token) {
+  return token.toLowerCase() === "auto" ? "auto" : parseMoney(token);
 }
 
 function parseMoney(token) {
@@ -112,13 +127,21 @@ function applyCommand(items, content) {
       return formatList(items);
 
     case "!add": {
+      // "used=<value>" can go anywhere; pull it out before reading the trailing numbers.
+      const usedArg = args.find((a) => /^used=/i.test(a));
+      if (usedArg) args.splice(args.indexOf(usedArg), 1);
+      const usedResaleValue = usedArg ? parseResale(usedArg.slice("used=".length)) : undefined;
+      if (usedResaleValue === null) {
+        return "❌ `used=` needs a number or `auto`, e.g. `used=250`.";
+      }
       if (args.length < 4) {
         return "❌ Usage: `!add <item name> <max buy> <resale value> <min profit>`\ne.g. `!add Jordan 4 Black Cat 200 320 50`";
       }
-      const [maxBuyPrice, targetResaleValue, minProfitMargin] = args.slice(-3).map(parseMoney);
+      const [maxBuyPrice, minProfitMargin] = [args.at(-3), args.at(-1)].map(parseMoney);
+      const targetResaleValue = parseResale(args.at(-2));
       const keyword = args.slice(0, -3).join(" ");
       if ([maxBuyPrice, targetResaleValue, minProfitMargin].includes(null)) {
-        return "❌ The last three values must be numbers: max buy, resale value, min profit.";
+        return "❌ The last three values must be numbers: max buy, resale value (or `auto`), min profit.";
       }
       if (items.some((item) => item.keyword.toLowerCase() === keyword.toLowerCase())) {
         return `❌ **${keyword}** is already on the watchlist. \`!remove\` it first to change its prices.`;
@@ -127,11 +150,12 @@ function applyCommand(items, content) {
         return `❌ The watchlist is full (${MAX_ITEMS} items) to stay inside the free AI limits. \`!remove\` something first.`;
       }
       const item = { keyword, maxBuyPrice, targetResaleValue, minProfitMargin };
+      if (usedResaleValue !== undefined) item.usedResaleValue = usedResaleValue;
       if (formatState({ lastCommandId: "0".repeat(20), items: [...items, item] }).length > MAX_MESSAGE_LENGTH) {
         return "❌ No room left to store another item. `!remove` something first.";
       }
       items.push(item);
-      return `✅ Added **${keyword}** — buy ≤ $${maxBuyPrice}, resale $${targetResaleValue}, min profit $${minProfitMargin}`;
+      return `✅ Added **${keyword}** — buy ≤ $${maxBuyPrice}, ${describeResale(item)}, min profit $${minProfitMargin}`;
     }
 
     case "!remove": {

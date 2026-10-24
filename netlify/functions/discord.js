@@ -30,7 +30,10 @@ function toCommandText(data) {
   const opt = Object.fromEntries((data.options ?? []).map((o) => [o.name, o.value]));
   switch (data.name) {
     case "add":
-      return `!add ${opt.item} ${opt.max_buy} ${opt.resale} ${opt.min_profit}`;
+      return (
+        `!add ${opt.item} ${opt.max_buy} ${opt.resale ?? "auto"} ${opt.min_profit}` +
+        (opt.used_resale === undefined ? "" : ` used=${opt.used_resale}`)
+      );
     case "remove":
       return `!remove ${opt.item}`;
     default:
